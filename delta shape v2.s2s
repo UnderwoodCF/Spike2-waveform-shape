@@ -1,0 +1,137 @@
+const mask$ := "*.smr";                     ' Change the mask to get a subset of smr files by name
+var files$[400];
+var subs$[50];
+var numFiles%,numSubs%, list%[1];			                    ' Number of files found
+var c%, h%, s%, i%, path$, pathSub$,DirPath$;
+
+FilePathSet("",0,"Select data directory");	' Prompts user to select directory
+numSubs%:= FileList(Subs$[], -2);   ' Fill array with sub-directories 
+DirPath$ := FilePath$(0);    
+for s%:=0 to  numSubs%-1 do       
+pathSub$ := print$("%s\%s",DirPath$,Subs$[s%]);    
+FilePathSet(pathSub$,0);	' 
+numFiles%:= FileList(files$[], 0, mask$);   ' Fill array with filenames
+   
+    printlog("%s\n%s",path$,pathSub$);
+
+for c%:=0 to  numFiles%-1 do       
+    h% := FileOpen(files$[c%], 0, 2);       ' Open the file
+    if (h% >= 0) AND maxtime()>=330 and ChanList(list%[], 0x1)>=2 then
+
+
+''''''''''''''''''''''''''''' method similar to Cole et al. paper
+
+var rawaMP, deltaAMP, period, PeakSharpness, TroughSharpness, VTrough,VTroughminus,VTroughplus;
+var ok%, x, EpochS, EpochE, LFP%, LFP1%, LFP2%, Region$, PEAK%, TROUGH%, RISE%, FALL%, v24%, Result%;
+var VPeak, VPeakminus, VPeakplus, xtime, Slope, FIR_delta%, FIR_LP%, DecaySlope, RiseSlope;
+
+'''''define epoch to analyse
+''Xrange(0,maxtime());
+''DlgCreate ("Define Epoch and LFP channels");        'start new dialog
+''DlgInteger(1,"Start",0,1000,0,0,1); 
+''DlgChan   (2, "LFP 1", 1);    'Waveform channel list
+''DlgChan   (3, "LFP 2", 1);    'Waveform channel list
+''ok% := DlgShow(EpochS, LFP1%, LFP2%); 'show dialog
+        ''epochE:=EpochE+300;
+        
+        LFP1%:= 5;
+        LFP2%:=6;
+        EpochE :=330;
+        EpochS :=30;
+        
+LFP%:=LFP1%;
+            Path$ := Filename$(0);
+            x:=0;
+            repeat  
+               
+region$ := chantitle$(LFP%);
+    
+''smooth to 20hz
+
+Chanprocessclear(LFP%);
+ChanProcessAdd(LFP%, 1, 0.0227); 
+ChanProcessAdd(LFP%, 5, 50); 
+
+''FIR filter LP 6Hz
+FiltCreate(-1, 2, 0.050002, 6); 
+FIR_LP% := FiltApply(-1, 0, LFP%, 0, maxtime(), 1); 
+
+''FIR filter 0.3-1.2Hz 0.11gap
+Filtcreate(-1,4,0.11,0.3,1.2);
+FIR_delta% := FiltApply(-1,0,FIR_LP%,0,maxtime(),1);
+
+''find peaks and troughs
+
+MeasureX(102, 1, "Cursor(0)", "0");
+MeasureY(100, 1, "Cursor(0)", "0");
+RISE% := MeasureToChan(0, "RISE", 3, 7, FIR_delta%, 0, "0.0", 0, 1, "", 0);
+Process(EpochS, EpochE, 1, 1, RISE%);
+v24% := View(0);
+FrontView(v24%);
+MeasureX(102, 1, "Cursor(0)", "0");
+MeasureY(100, 1, "Cursor(0)", "0");
+FALL% := MeasureToChan(0, "FALL", 3, 8, FIR_delta%, 0, "0.0", 0, 1, "", 0);
+Process(EpochS, EpochE, 1, 1, FALL%);
+cursorset(4,0,0,0,0);
+CursorActive(1,14, RISE%, "Cursor(0)", "MaxTime()", "", 1);   'FIND RISE
+CursorActive(2,14, FALL%, "Cursor(0)", "MaxTime()", "", 1);   'FIND FALL
+CursorActive(3,2, FIR_LP%, "Cursor(0)", "Cursor(1)", "", 1);   'FIND MIN
+CursorActive(4,1, FIR_LP%, "Cursor(0)", "Cursor(2)", "", 1);   'FIND MAX
+MeasureX(102, 1, "Cursor(3)", "0");
+MeasureY(100, 1, "Cursor(0)", "0");
+TROUGH% := MeasureToChan(0, "TROUGH", 3, 14, FALL%, 0, 1, 0, 1);
+Process(EpochS, EpochE, 0, 1, TROUGH%);
+MeasureX(102, 1, "Cursor(4)", "0");
+MeasureY(100, 1, "Cursor(0)", "0");
+PEAK% := MeasureToChan(0, "PEAK", 3, 14, RISE%, 0, 1, 0, 1);
+Process(EpochS, EpochE, 0, 1, PEAK%);
+Chanhide(FALL%,RISE%,TROUGH%,PEAK%);
+
+' calculates waveform parameters for delta waves 
+
+cursor(1,0);
+CursorActive(1,14, PEAK%, "cursor(1)", "maxtime()", "Maxtime()", 1);   
+cursor(2,0);
+CursorActive(2,14, TROUGH%, "cursor(1)", "maxtime()", "Maxtime()", 1);   
+cursor(3,0);
+CursorActive(3,14, PEAK%, "cursor(2)", "maxtime()", "Maxtime()", 1);  
+    cursorsearch(1,3);
+    
+v24% := View(0);
+Filenew(1,1);
+Result% := View(0);
+Print("Filename\tLFP channel\tTime\tPeakSharp\tTroughSharp\tDecaySlope\tRiseSlope\tPeriod\trawAmplitude\tdeltaAmplitude"); 
+Frontview(v24%);        
+    
+repeat
+    VPeak := chanvalue(FIR_LP%, cursor(1));
+    VPeakplus := chanvalue(FIR_LP%, cursor(1)+0.05);
+    VPeakminus := chanvalue(FIR_LP%, cursor(1)-0.05);
+    PeakSharpness := Abs(((VPeak-VPeakminus)+(VPeak-VPeakplus))/2);
+    VTrough := chanvalue(FIR_LP%, cursor(2));
+    VTroughplus := chanvalue(FIR_LP%, cursor(2)+0.05);
+    VTroughminus := chanvalue(FIR_LP%, cursor(2)-0.05);
+    TroughSharpness := Abs(((VTrough-VTroughminus)+(VTrough-VTroughplus))/2);
+    DecaySlope := abs(Chanmeasure(FIR_LP%,3,cursor(1),cursor(2)));
+    RiseSlope := abs(Chanmeasure(FIR_LP%,3,cursor(2),cursor(3)));
+    xtime := cursor(1);
+    rawAMP := abs(chanvalue(FIR_LP%,cursor(2))) + (abs(chanvalue(FIR_LP%,cursor(1)))+abs(chanvalue(FIR_LP%,cursor(3)))/2);
+    deltaAMP := abs(chanvalue(FIR_delta%,cursor(2))) + (abs(chanvalue(FIR_delta%,cursor(1)))+abs(chanvalue(FIR_delta%,cursor(3)))/2);
+    Period := cursor(3)-cursor(1);
+    Frontview(Result%);
+    Print("\n%s\t%s\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f", Path$,Region$,xtime,PeakSharpness,TroughSharpness,DecaySlope,RiseSlope,period,rawAMP,deltaAMP); 
+    Frontview(v24%);
+    cursorsearch(1,3);
+    until cursor(3)>=EpochE;
+                
+    Frontview(Result%);
+FileSaveAs("C:/Users/Conor/Desktop/processed/" + "DeltaShape_" + print$("File%d%d%d",s%,c%,x) + ".txt",1);
+    FileClose(0, -1);    
+    LFP%:=LFP2%;
+    x:=x+1;
+        until x>1;
+        Frontview(v24%);        
+        FileClose(1, -1);  
+        endif;
+    next;
+    next;

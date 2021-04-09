@@ -1,0 +1,152 @@
+
+''''''''''''''''''''''''''''' calculates the steepness and sharpness of beta waveforms between c8 and c9. Shows summary values in log and saves data as textfile (method from Cole et al. paper)
+
+'Printlog("\nFilename\tPhenotyper\tBehaviour\tPeakSharpness\tTroughSharpness\tSharpRatio\tRiseSlope\tDecaySlope\tSteepRatio"); '''silence line after first run if running multiples
+
+
+var Behaviour$ := "REM"; ''''change according to behavioural state contained within the epoch
+var EEG% := 4;
+var phenotyper%;
+
+if EEG% =1 then phenotyper% := 1 else phenotyper% := 2 endif;
+
+var path$ := FileName$(0);
+
+
+var EpochS :=  cursor(8);
+var EpochE :=  cursor(8)+60;
+var t := 0.0015; ''time between points to measure sharpness (2ms for Cole paper). 
+
+
+var PEAK%, TROUGH%, RISE%, FALL%;
+var v24%;
+var Ch%;
+var Result%;
+var VPeak, VPeakminus, VPeakplus, VTrough, VTroughminus, VTroughplus, xtime, FIR_beta%, LP%;
+var PeakSharpness, TroughSharpness, RiseSlope, DecaySlope, MeanPSharp, MeanTSharp, MeanRSlope, MeanDSlope, x, SteepRatio, SharpRatio;
+
+Chanprocessclear(EEG%);
+
+''Low pass 200hz
+FiltCreate(-1, 2, 8.4, 200); 'FIR Low pass
+LP% := FiltApply(-1, 0, EEG%, 0.000000, maxtime(), 1); 
+Chantitle$(LP%,"200hz Low Pass");
+'ChanShow(LP%);
+
+''FIR filter 35-45Hz 4.5 gap or 27-37 for REM
+if behaviour$ = "REM" then
+
+    FiltCreate(-1, 4, 4.5, 27, 37); 'FIR Band pass
+    else  FiltCreate(-1, 4, 4.5, 35, 45); 'FIR Band pass
+   endif; 
+FIR_beta% := FiltApply(-1, 0, LP%, 0.000000, maxtime(), 1);
+Chantitle$(FIR_Beta%,"FIR Beta");
+'ChanShow(FIR_beta%); 'Show the result
+    
+    
+    
+''setup result file'' 
+v24% := View(0);
+Filenew(1,1);
+Result% := View(0);
+Print("Filename\t\tPhenotyper\tBehaviour\tTime\tVPeak\tVPeak-ms\tVPeak+ms\tVTrough\tVTrough-ms\tVTrough+ms\tDecaySlope\tRiseSlope"); 
+Frontview(v24%);
+''find peaks and troughs
+
+MeasureX(102, 1, "Cursor(0)", "0");
+MeasureY(100, 1, "Cursor(0)", "0");
+RISE% := MeasureToChan(0, "RISE", 3, 7, FIR_beta%, 0, "0.0", 0, 1, "", 0);
+Process(EpochS, EpochE, 1, 1, RISE%);
+v24% := View(0);
+
+FrontView(v24%);
+MeasureX(102, 1, "Cursor(0)", "0");
+MeasureY(100, 1, "Cursor(0)", "0");
+FALL% := MeasureToChan(0, "FALL", 3, 8, FIR_beta%, 0, "0.0", 0, 1, "", 0);
+Process(EpochS, EpochE, 1, 1, FALL%);
+
+
+cursordelete(1);
+Cursordelete(2);
+cursordelete(3);
+Cursordelete(4);
+Cursornew(1);
+cursornew(2);
+cursornew(3);
+cursornew(4);
+CursorActive(1,14, RISE%, "Cursor(0)", "MaxTime()", "", 1);   'FIND RISE
+CursorActive(2,14, FALL%, "Cursor(0)", "MaxTime()", "", 1);   'FIND FALL
+CursorActive(3,2, LP%, "Cursor(0)", "Cursor(1)", "", 1);   'FIND MIN
+CursorActive(4,1, LP%, "Cursor(0)", "Cursor(2)", "", 1);   'FIND MAX
+
+MeasureX(102, 1, "Cursor(3)", "0");
+MeasureY(100, 1, "Cursor(0)", "0");
+TROUGH% := MeasureToChan(0, "TROUGH", 3, 14, FALL%, 0, 1, 0, 1);
+Process(EpochS, EpochE, 0, 1, TROUGH%);
+
+MeasureX(102, 1, "Cursor(4)", "0");
+MeasureY(100, 1, "Cursor(0)", "0");
+PEAK% := MeasureToChan(0, "PEAK", 3, 14, RISE%, 0, 1, 0, 1);
+Process(EpochS, EpochE, 0, 1, PEAK%);
+
+Chanhide(PEAK%,TROUGH%,RISE%,FALL%);
+
+' calculates sharpness parameters for beta waves - peak and next trough
+
+cursor(1,0);
+CursorActive(1,14, PEAK%, "cursor(1)", "maxtime()", "Maxtime()", 1);   
+cursor(2,0);
+CursorActive(2,14, TROUGH%, "cursor(1)", "maxtime()", "Maxtime()", 1);   
+cursor(3,0);
+CursorActive(3,14, PEAK%, "cursor(2)", "maxtime()", "Maxtime()", 1);  
+cursorsearch(1,1);
+cursorsearch(2,2);
+cursorsearch(3,3);
+
+repeat
+    VPeak := chanvalue(LP%, cursor(1));
+    VPeakplus := chanvalue(LP%, cursor(1)+t);
+    VPeakminus := chanvalue(LP%, cursor(1)-t);
+    PeakSharpness := Abs(((VPeak-VPeakminus)+(VPeak-VPeakplus))/2);
+    VTrough := chanvalue(LP%, cursor(2));
+    VTroughplus := chanvalue(LP%, cursor(2)+t);
+    VTroughminus := chanvalue(LP%, cursor(2)-t);
+    TroughSharpness := Abs(((VTrough-VTroughminus)+(VTrough-VTroughplus))/2);
+    xtime := cursor(1);
+    DecaySlope := Chanmeasure(LP%,3,cursor(1),cursor(2));
+    RiseSlope := Chanmeasure(LP%,3,cursor(2),cursor(3));
+    
+    MeanPSharp := MeanPSharp + PeakSharpness;
+    MeanTSharp := MeanTSharp + TroughSharpness;
+    MeanRSlope := MeanRSlope + Abs(RiseSlope);
+    MeanDSlope := MeanDSlope + Abs(DecaySlope);
+    x :=x+1;
+    
+    Frontview(Result%);
+    Print("\n%s\t%d\t%s\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f", path$, phenotyper%, Behaviour$, xTime, VPeak, VPeakplus, VPeakminus,VTrough, VTroughplus, VTroughminus,DecaySlope,RiseSlope); 
+    Frontview(v24%);
+    cursorsearch(1,1);
+    cursorsearch(2,2);
+    cursorsearch(3,3);
+until cursor(2)>EpochE or cursor(1)>EpochE or cursor(3)>EpochE;
+
+''save all datapoints to text file and display the summmary in the log
+
+    MeanPSharp := MeanPSharp/x;
+    MeanTSharp := MeanTSharp/x;
+    if MeanPSharp > MeanTSharp then SharpRatio := MeanPSharp/MeanTSharp else SharpRatio := MeanTSharp/MeanPSharp endif;
+
+    MeanRSlope := MeanRSlope/x;
+    MeanDSlope := MeanDSlope/x;
+    if MeanRSlope > MeanDSlope then SteepRatio :=  MeanRSlope/MeanDSlope else SteepRatio := MeanDSlope/MeanRSlope endif;
+
+
+Printlog("\n%s\t%d\t%s\t%f\t%f\t%f\t%f\t%f\t%f",Path$, Phenotyper%, Behaviour$, MeanPSharp, MeanTSharp, SharpRatio, MeanRSlope, MeanDSlope, SteepRatio);
+
+
+Frontview(Result%);
+FileSaveAs(path$ + Print$("_P%d_",Phenotyper%) + "BetaShape_" + Print$("%s_",Behaviour$) + Print$("%d",xTime)  + ".txt",1);  
+Fileclose(0,-1);
+
+Frontview(v24%);
+Chanprocessclear(EEG%);
